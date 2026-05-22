@@ -1,39 +1,52 @@
-"""Minimal CLI entry point for sqlmigrate-audit."""
+"""CLI entry point for sqlmigrate-audit."""
 
 from __future__ import annotations
 
 import argparse
 import sys
 
-from .exporter import export_registry, import_registry
-from .validator import validate_registry
+from sqlmigrate_audit.exporter import export_registry, import_registry
+from sqlmigrate_audit.reporter import generate_report
+from sqlmigrate_audit.validator import validate_registry
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:
-    """Load a registry file and validate all records."""
     try:
-        fmt = args.format
-        registry = import_registry(args.file, fmt)
-    except (FileNotFoundError, ValueError) as exc:
-        print(f"Error loading registry: {exc}", file=sys.stderr)
-        return 1
-
+        registry = import_registry(args.file, fmt="json")
+    except FileNotFoundError:
+        print(f"Error: file not found: {args.file}", file=sys.stderr)
+        return 2
     result = validate_registry(registry)
+    if result.is_valid():
+        print("Validation passed — no issues found.")
+        return 0
     print(result.summary())
-    return 0 if result.is_valid else 2
+    return 1
 
 
 def _cmd_export(args: argparse.Namespace) -> int:
-    """Export a registry file to another format."""
     try:
-        fmt_in = args.input_format
-        fmt_out = args.output_format
-        registry = import_registry(args.input, fmt_in)
-        export_registry(registry, args.output, fmt_out)
-        print(f"Exported {len(registry.all())} record(s) to '{args.output}' as {fmt_out}.")
-    except (FileNotFoundError, ValueError) as exc:
+        registry = import_registry(args.input, fmt="json")
+    except FileNotFoundError:
+        print(f"Error: input file not found: {args.input}", file=sys.stderr)
+        return 2
+    try:
+        export_registry(registry, args.output, fmt=args.format)
+    except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
+    print(f"Exported to {args.output} (format: {args.format})")
+    return 0
+
+
+def _cmd_report(args: argparse.Namespace) -> int:
+    try:
+        registry = import_registry(args.file, fmt="json")
+    except FileNotFoundError:
+        print(f"Error: file not found: {args.file}", file=sys.stderr)
+        return 2
+    title = args.title if args.title else "Migration Report"
+    print(generate_report(registry, title=title))
     return 0
 
 
@@ -44,20 +57,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command")
 
-    # validate sub-command
-    p_validate = sub.add_parser("validate", help="Validate a migration registry file")
-    p_validate.add_argument("file", help="Path to registry file")
-    p_validate.add_argument("--format", choices=["json", "csv"], default="json",
-                             help="File format (default: json)")
-    p_validate.set_defaults(func=_cmd_validate)
+    p_validate = sub.add_parser("validate", help="Validate a JSON registry file.")
+    p_validate.add_argument("file", help="Path to JSON registry file.")
 
-    # export sub-command
-    p_export = sub.add_parser("export", help="Convert a registry between formats")
-    p_export.add_argument("input", help="Input registry file")
-    p_export.add_argument("output", help="Output registry file")
-    p_export.add_argument("--input-format", choices=["json", "csv"], default="json")
-    p_export.add_argument("--output-format", choices=["json", "csv"], default="csv")
-    p_export.set_defaults(func=_cmd_export)
+    p_export = sub.add_parser("export", help="Export registry to another format.")
+    p_export.add_argument("input", help="Input JSON registry file.")
+    p_export.add_argument("output", help="Output file path.")
+    p_export.add_argument("--format", default="csv", choices=["json", "csv"], dest="format")
+
+    p_report = sub.add_parser("report", help="Print a human-readable migration report.")
+    p_report.add_argument("file", help="Path to JSON registry file.")
+    p_report.add_argument("--title", default="", help="Custom report title.")
 
     return parser
 
@@ -65,11 +75,15 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if not args.command:
-        parser.print_help()
-        return 0
-    return args.func(args)
+    if args.command == "validate":
+        return _cmd_validate(args)
+    if args.command == "export":
+        return _cmd_export(args)
+    if args.command == "report":
+        return _cmd_report(args)
+    parser.print_help()
+    return 0
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     sys.exit(main())
