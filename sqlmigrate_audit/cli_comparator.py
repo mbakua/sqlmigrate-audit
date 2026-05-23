@@ -8,20 +8,21 @@ from sqlmigrate_audit.snapshot_store import SnapshotStore
 from sqlmigrate_audit.comparator import compare_snapshots, format_comparison
 
 
+def _resolve_snapshot(snapshots: list, label: str):
+    """Return the snapshot matching *label*, or print an error and exit."""
+    match = next((s for s in snapshots if s.label == label), None)
+    if match is None:
+        print(f"Error: snapshot '{label}' not found.", file=sys.stderr)
+        sys.exit(1)
+    return match
+
+
 def _cmd_compare(args: argparse.Namespace) -> None:
     store = SnapshotStore(args.store)
     snapshots = store.list()
-    labels = [s.label for s in snapshots]
 
-    if args.label_a not in labels:
-        print(f"Error: snapshot '{args.label_a}' not found.", file=sys.stderr)
-        sys.exit(1)
-    if args.label_b not in labels:
-        print(f"Error: snapshot '{args.label_b}' not found.", file=sys.stderr)
-        sys.exit(1)
-
-    snap_a = next(s for s in snapshots if s.label == args.label_a)
-    snap_b = next(s for s in snapshots if s.label == args.label_b)
+    snap_a = _resolve_snapshot(snapshots, args.label_a)
+    snap_b = _resolve_snapshot(snapshots, args.label_b)
 
     report = compare_snapshots(snap_a, snap_b)
     print(format_comparison(report))
